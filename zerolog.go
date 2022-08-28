@@ -1,15 +1,12 @@
-package gcp_wrapper
+package gcplogger
 
 import (
+	"cloud.google.com/go/logging"
 	"context"
 	"fmt"
 	"github.com/rs/zerolog"
 	"io"
 )
-
-//type Config struct {
-//	Level string
-//}
 
 type ZerologGCP struct {
 	Logger    zerolog.Logger
@@ -17,25 +14,29 @@ type ZerologGCP struct {
 	gcpWriter *Writer
 }
 
-func NewZerolog(ctx context.Context, logID, level string, gcpConfig GCPConfig) (*ZerologGCP, error) {
-	levelMap := map[zerolog.Level]int{
-		zerolog.DebugLevel: LevelDebug,
-		zerolog.InfoLevel:  LevelInfo,
-		zerolog.WarnLevel:  LevelWarning,
-		zerolog.ErrorLevel: LevelError,
-		zerolog.PanicLevel: LevelCritical,
-		zerolog.FatalLevel: LevelCritical,
+func NewZerolog(ctx context.Context, logID string, gcpConfig GCPConfig) (io.Writer, error) {
+	levelMap := map[string]logging.Severity{
+		zerolog.DebugLevel.String(): logging.Debug,
+		zerolog.InfoLevel.String():  logging.Info,
+		zerolog.WarnLevel.String():  logging.Warning,
+		zerolog.ErrorLevel.String(): logging.Error,
+		zerolog.PanicLevel.String(): logging.Critical,
+		zerolog.FatalLevel.String(): logging.Critical,
+		zerolog.NoLevel.String():    logging.Default,
 	}
 	levelMod := LevelModifier{
 		OriginalField:  zerolog.LevelFieldName,
 		RemoveOriginal: true,
-		Mapping: func(originalLvl interface{}) int {
-			ori, ok := originalLvl.(string)
+		Mapping: func(originalLvl interface{}) logging.Severity {
+			oriString, ok := originalLvl.(string)
 			if !ok {
-				return int(LevelDefault)
+				return logging.Default
 			}
-			zlogLvl, _ := zerolog.ParseLevel(ori)
-			return levelMap[zlogLvl]
+			gcpSeverity, ok := levelMap[oriString]
+			if !ok {
+				return logging.Default
+			}
+			return gcpSeverity
 		},
 	}
 	gcpLogConfig := GCPLogConfig{
@@ -45,45 +46,11 @@ func NewZerolog(ctx context.Context, logID, level string, gcpConfig GCPConfig) (
 		},
 		LogID:         logID,
 		LevelModifier: levelMod,
-		Level:         level,
 	}
-	gcpWriter, err := NewWriter(ctx, GCPLogConfig{
-		GCP: GCPConfig{
-			ProjectID:          gcpConfig.ProjectID,
-			ServiceAccountPath: gcpConfig.ServiceAccountPath,
-		},
-		LogID:         logID,
-		LevelModifier: levelMod,
-	})
-	z := &ZerologGCP{config: gcpLogConfig}
+	gcpWriter, err := NewWriter(ctx, gcpLogConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gcplogging writer: %w", err)
 	}
-	lg, err := newZerolog(gcpLogConfig, gcpWriter)
-	if err != nil {
-		return nil, err
-	}
-	z.gcpWriter = gcpWriter
-	z.Logger = lg
-	return z, nil
-}
 
-func newZerolog(cfg GCPLogConfig, writer io.Writer) (zerolog.Logger, error) {
-	logLvl, err := zerolog.ParseLevel(cfg.Level)
-	if err != nil {
-		return zerolog.Nop(), fmt.Errorf("invalid zerolog log level: %w", err)
-	}
-	zlog := zerolog.New(writer).
-		Level(logLvl).
-		With().
-		Str("service", cfg.LogID).
-		Timestamp().
-		Logger()
-	return zlog, nil
-}
-
-func (z *ZerologGCP) Flush() {
-	if z.gcpWriter != nil {
-		z.gcpWriter.Flush()
-	}
+	return gcpWriter, nil
 }

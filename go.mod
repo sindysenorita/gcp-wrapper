@@ -1,4 +1,4 @@
-module github.com/sindysenorita/gcp-wrapper
+module github.com/sindysenorita/gcplogger
 
 go 1.17
 
