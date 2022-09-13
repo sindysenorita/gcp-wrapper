@@ -40,14 +40,11 @@ func NewZerolog(ctx context.Context, logID string, gcpConfig GCPConfig) (io.Writ
 		},
 	}
 	gcpLogConfig := GCPLogConfig{
-		GCP: GCPConfig{
-			ProjectID:          gcpConfig.ProjectID,
-			ServiceAccountPath: gcpConfig.ServiceAccountPath,
-		},
+		GCP:           gcpConfig,
 		LogID:         logID,
 		LevelModifier: levelMod,
 	}
-	gcpWriter, err := NewWriter(ctx, gcpLogConfig)
+	gcpWriter, err := NewWriter(ctx, gcpLogConfig, JsonStructuredLogParser)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gcplogging writer: %w", err)
 	}

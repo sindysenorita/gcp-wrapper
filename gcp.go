@@ -34,14 +34,20 @@ type LevelModifier struct {
 	Mapping        func(originalLvl interface{}) logging.Severity
 }
 
+type StructuredLog map[string]interface{}
+type StructuredLogParser func(b []byte) (StructuredLog, error)
+
 type Writer struct {
-	cfg    GCPLogConfig
-	logger *logging.Logger
+	cfg        GCPLogConfig
+	logger     *logging.Logger
+	sLogParser StructuredLogParser
 }
 
+// TODO use better auth method than service account
 func NewWriter(
 	ctx context.Context,
 	cfg GCPLogConfig,
+	sLogParser StructuredLogParser,
 ) (*Writer, error) {
 	client, err := logging.NewClient(
 		ctx,
@@ -55,18 +61,40 @@ func NewWriter(
 		cfg:    cfg,
 		logger: client.Logger(cfg.LogID),
 	}
+	if sLogParser != nil {
+		s.sLogParser = sLogParser
+	} else {
+		s.sLogParser = JsonStructuredLogParser
+	}
 	return s, nil
 }
 
-func (s *Writer) Write(p []byte) (n int, err error) {
-	entry := logging.Entry{}
-	var logFields map[string]interface{}
-	err = json.NewDecoder(bytes.NewReader(p)).Decode(&logFields)
-	if err != nil {
-		return 0, fmt.Errorf("failed to decode logFields: %w", err)
-	}
-	mod := s.cfg.LevelModifier
+func NoStructuredLogParser(b []byte) (StructuredLog, error) {
+	return StructuredLog{
+		"message": string(b),
+	}, nil
+}
 
+func JsonStructuredLogParser(b []byte) (StructuredLog, error) {
+	var logFields StructuredLog
+	err := json.NewDecoder(bytes.NewReader(b)).Decode(&logFields)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode logFields: %w", err)
+	}
+	return logFields, nil
+}
+
+func (s *Writer) Write(b []byte) (n int, err error) {
+	entry := logging.Entry{}
+	if s.sLogParser == nil {
+		return 0, fmt.Errorf("nil structured log parser")
+	}
+	logFields, err := s.sLogParser(b)
+	if err != nil {
+		return 0, fmt.Errorf("error from structured log parser: %w", err)
+	}
+
+	mod := s.cfg.LevelModifier
 	// if true, need to modify the severity field in the original data
 	if mod.Mapping != nil || mod.RemoveOriginal {
 		oriLvl, ok := logFields[mod.OriginalField]
@@ -79,5 +107,5 @@ func (s *Writer) Write(p []byte) (n int, err error) {
 	}
 	entry.Payload = logFields
 	s.logger.Log(entry)
-	return len(p), nil
+	return len(b), nil
 }
